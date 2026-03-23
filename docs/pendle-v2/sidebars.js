@@ -3,21 +3,25 @@ module.exports = {
     {
       type: "doc",
       id: "Introduction",
-      label: "📖 Introduction",
+      label: "Introduction",
+      customProps: { icon: "auto_stories" },
     },
     {
       type: "doc",
       id: "FAQ",
-      label: "❓ FAQ",
+      label: "FAQ",
+      customProps: { icon: "help" },
     },
     {
       type: "category",
-      label: "⚙️ Protocol Mechanics",
+      label: "Protocol Mechanics",
+      customProps: { icon: "settings" },
       items: [
-        { type: "doc", id: "ProtocolMechanics/Glossary", label: "📚 Glossary" },
+        { type: "doc", id: "ProtocolMechanics/Glossary", label: "Glossary", customProps: { icon: "library_books" } },
         {
           type: "category",
-          label: "🎯 Yield Tokenization",
+          label: "Yield Tokenization",
+          customProps: { icon: "stacked_line_chart" },
           items: [
             { type: "doc", id: "ProtocolMechanics/YieldTokenization/SY" },
             { type: "doc", id: "ProtocolMechanics/YieldTokenization/Minting" },
@@ -27,7 +31,8 @@ module.exports = {
         },
         {
           type: "category",
-          label: "💧 Liquidity Engines",
+          label: "Liquidity Engines",
+          customProps: { icon: "water" },
           items: [
             { type: "doc", id: "ProtocolMechanics/LiquidityEngines/AMM" },
             { type: "doc", id: "ProtocolMechanics/LiquidityEngines/OrderBook" },
@@ -35,11 +40,12 @@ module.exports = {
         },
         {
           type: "category",
-          label: "💰 Tokenomics and Fees",
+          label: "Tokenomics and Fees",
+          customProps: { icon: "payments" },
           items: [
             { type: "doc", id: "ProtocolMechanics/Mechanisms/Tokenomics" },
             { type: "doc", id: "ProtocolMechanics/Mechanisms/sPENDLE" },
-            { type: "doc", id: "ProtocolMechanics/Mechanisms/Incentives"},
+            { type: "doc", id: "ProtocolMechanics/Mechanisms/Incentives" },
             { type: "doc", id: "ProtocolMechanics/Mechanisms/Fees" },
           ],
         },
@@ -49,31 +55,34 @@ module.exports = {
     },
     {
       type: "category",
-      label: "📱 App Guide",
+      label: "App Guide",
+      customProps: { icon: "apps" },
       items: [
-        { type: "doc", id: "AppGuide/UsingPendle", label: "🚀 Using Pendle" },
-        { type: "doc", id: "AppGuide/Mint", label: "🪙 Mint" },
-        { type: "doc", id: "AppGuide/Swap", label: "🔄 Swap" },
-        { type: "doc", id: "AppGuide/LimitOrder", label: "📊 Limit Order" },
-        { type: "doc", id: "AppGuide/CrossChainPT", label: "🌐 Cross-Chain PT" },
-        { type: "doc", id: "AppGuide/Pool", label: "🏊 Pool" },
-        { type: "doc", id: "AppGuide/Claim", label: "💎 Claim" },
-        { type: "doc", id: "AppGuide/Dashboard", label: "📈 Dashboard" },
-        { type: "doc", id: "AppGuide/Pencosystem", label: "🔗 Pencosystem" },
-        { type: "doc", id: "AppGuide/BridgePendle", label: "🌉 Bridge PENDLE"}
+        { type: "doc", id: "AppGuide/UsingPendle", label: "Using Pendle", customProps: { icon: "rocket_launch" } },
+        { type: "doc", id: "AppGuide/Mint", label: "Mint", customProps: { icon: "generating_tokens" } },
+        { type: "doc", id: "AppGuide/Swap", label: "Swap", customProps: { icon: "swap_horiz" } },
+        { type: "doc", id: "AppGuide/LimitOrder", label: "Limit Order", customProps: { icon: "tune" } },
+        { type: "doc", id: "AppGuide/CrossChainPT", label: "Cross-Chain PT", customProps: { icon: "public" } },
+        { type: "doc", id: "AppGuide/Pool", label: "Pool", customProps: { icon: "pool" } },
+        { type: "doc", id: "AppGuide/Claim", label: "Claim", customProps: { icon: "redeem" } },
+        { type: "doc", id: "AppGuide/Dashboard", label: "Dashboard", customProps: { icon: "dashboard" } },
+        { type: "doc", id: "AppGuide/Pencosystem", label: "Pencosystem", customProps: { icon: "hub" } },
+        { type: "doc", id: "AppGuide/BridgePendle", label: "Bridge PENDLE", customProps: { icon: "swap_horizontal_circle" } },
       ],
     },
     {
       type: "category",
-      label: "👨‍💻 Developers",
+      label: "Developers",
+      customProps: { icon: "code" },
       items: [
         { type: "doc", id: "Developers/Overview" },
         { type: "doc", id: "Developers/HighLevelArchitecture" },
         { type: "doc", id: "Developers/FAQ" },
-        { type: "doc", id: "Developers/Troubleshooting", label: "🔧 Troubleshooting" },
+        { type: "doc", id: "Developers/Troubleshooting", label: "Troubleshooting", customProps: { icon: "build" } },
         {
           type: "category",
-          label: "🤝 Integration Guides",
+          label: "Integration Guides",
+          customProps: { icon: "handshake" },
           items: [
             { type: "doc", id: "Developers/Integration/CommunityListing", label: "Community Listing" },
             { type: "doc", id: "Developers/Integration/CrossChainPT", label: "Cross-Chain PT" },
@@ -82,17 +91,18 @@ module.exports = {
         },
         {
           type: "category",
-          label: "📜 Contracts",
+          label: "Contracts",
+          customProps: { icon: "description" },
           items: [
             { type: "doc", id: "Developers/Contracts/StandardizedYield" },
-            { type: "doc", label: "Yield Tokenization", id: "Developers/Contracts/YieldTokenization"},
-            { type: "doc", label: "PendleMarket", id: "Developers/Contracts/PendleMarket"},
+            { type: "doc", label: "Yield Tokenization", id: "Developers/Contracts/YieldTokenization" },
+            { type: "doc", label: "PendleMarket", id: "Developers/Contracts/PendleMarket" },
             {
               type: "category",
               label: "PendleRouter",
               items: [
                 { type: "doc", id: "Developers/Contracts/PendleRouter/PendleRouterOverview" },
-                { type: "doc", id: "Developers/Contracts/PendleRouter/ContractIntegrationGuide"},
+                { type: "doc", id: "Developers/Contracts/PendleRouter/ContractIntegrationGuide" },
                 {
                   type: "category",
                   label: "API Reference",
@@ -103,25 +113,18 @@ module.exports = {
                     { type: "doc", id: "Developers/Contracts/PendleRouter/ApiReference/LiquidityFunctions" },
                     { type: "doc", id: "Developers/Contracts/PendleRouter/ApiReference/MiscFunctions" },
                     { type: "doc", id: "Developers/Contracts/PendleRouter/ApiReference/SimpleFunctions" },
-                  ]
-                }
-                
+                  ],
+                },
               ],
             },
             { type: "doc", id: "Developers/Contracts/sPENDLE" },
             { type: "doc", id: "Developers/Contracts/UnitAndDecimals" },
           ],
         },
-        // {
-        //   type: "category",
-        //   label: "Backend",
-        //   items: [
-        //     { type: "doc", id: "Developers/Backend/Backend" },
-        //   ],
-        // },
         {
           type: "category",
-          label: "📋 Limit Orders",
+          label: "Limit Orders",
+          customProps: { icon: "list_alt" },
           items: [
             { type: "doc", id: "Developers/LimitOrder/Overview", label: "Overview" },
             { type: "doc", id: "Developers/LimitOrder/LimitOrderContract" },
@@ -132,7 +135,8 @@ module.exports = {
         },
         {
           type: "category",
-          label: "🔮 Oracles",
+          label: "Oracles",
+          customProps: { icon: "visibility" },
           items: [
             { type: "doc", id: "Developers/Oracles/HowToIntegratePtAndLpOracle" },
             { type: "doc", id: "Developers/Oracles/IntroductionOfLpOracle" },
@@ -147,42 +151,47 @@ module.exports = {
                 { type: "doc", id: "Developers/Oracles/DeterministicOracles/LinearDiscountOracle" },
                 { type: "doc", id: "Developers/Oracles/DeterministicOracles/LPLinearDiscountOracle" },
                 { type: "doc", id: "Developers/Oracles/DeterministicOracles/ChoosingLinearDiscountParams" },
-              ]
-            }
+              ],
+            },
           ],
         },
         {
           type: "category",
-          label: "🛠️ Off-chain helpers",
+          label: "Off-chain Helpers",
+          customProps: { icon: "construction" },
           items: [
             { type: "doc", id: "Developers/Backend/ApiOverview" },
             { type: "doc", id: "Developers/Backend/HostedSdk" },
-            { type: "link", label: 'API Reference', href: "https://api-v2.pendle.finance/core/docs" },
+            { type: "link", label: "API Reference", href: "https://api-v2.pendle.finance/core/docs" },
             { type: "doc", id: "Developers/Backend/RouterStatic" },
           ],
         },
-        { type: "doc", id: "Developers/Deployments", label: "🚀 Deployments" },
+        { type: "doc", id: "Developers/Deployments", label: "Deployments", customProps: { icon: "rocket_launch" } },
       ],
     },
     {
       type: "doc",
       id: "Security",
-      label: "🔒 Security",
+      label: "Security",
+      customProps: { icon: "security" },
     },
     {
       type: "link",
-      label: "📄 Whitepapers",
+      label: "Whitepapers",
       href: "https://github.com/pendle-finance/pendle-v2-resources/tree/main/whitepapers",
+      customProps: { icon: "article" },
     },
     {
       type: "link",
-      label: "📚 Learn In-App",
+      label: "Learn In-App",
       href: "https://app.pendle.finance/pro/education/learn",
+      customProps: { icon: "school" },
     },
     {
       type: "link",
-      label: "🎓 Pendle Academy",
+      label: "Pendle Academy",
       href: "https://pendle.gitbook.io/pendle-academy",
+      customProps: { icon: "school" },
     },
   ],
 };

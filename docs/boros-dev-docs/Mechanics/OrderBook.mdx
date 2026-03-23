@@ -1,0 +1,172 @@
+# Central Limit Order Book
+
+Boros implements a gas-optimized central limit order book (CLOB) specifically designed for the EVM. The order book architecture minimizes gas costs through [lazy settlement](./Settlement.mdx) and efficient data structures while maintaining the functionality expected from professional trading platforms.
+
+## Order Book Structure
+
+The order book consists of two independent sides:
+
+- **Long Side (Bids)**: Orders to buy/go long on interest rates
+- **Short Side (Asks)**: Orders to sell/go short on interest rates
+
+Each side contains **65,536 discrete rate levels** (ticks) ranging from -32768 to 32767.
+
+The tick system uses an exponential function to map discrete tick indices to interest rates. This design provides:
+
+- **Compactness**: Entire rate range expressed with just 16 bits
+- **Expressiveness**: Finer granularity near zero, coarser at extremes
+- **Symmetry**: Equal precision for positive and negative rates
+
+The tick spacing is configurable per market via the `tickStep` parameter. A larger `tickStep` creates wider rate intervals between ticks, suitable for more volatile markets.
+
+## Tick vs Rate
+
+**Ticks are for the order book only.** The order book uses integer tick values to represent discrete rate levels. The AMM, on the other hand, operates with continuous **rates** (not ticks). This distinction is important:
+
+- **Order placement** requires an integer `tick` value — you cannot place orders at arbitrary rates
+- **AMM implied rate** is a continuous value and does not correspond to any specific tick
+- **Mid APR** is typically `(bestBid + bestAsk) / 2` or the AMM implied rate, which is a continuous value that generally cannot be expressed as an integer tick
+- When converting a rate to a tick for order placement, you must **round** to the nearest valid tick — this introduces a small rounding difference
+
+## Tick to Rate Conversion
+
+The conversion between tick indices and interest rates follows an exponential formula:
+
+$$
+\text{rate}(\text{tick}) = \begin{cases}
+1.00005^{\text{tick} \times \text{tickStep}} - 1 & \text{if tick} \geq 0 \\
+-(1.00005^{-\text{tick} \times \text{tickStep}} - 1) & \text{if tick} < 0
+\end{cases}
+$$
+
+The TickMath library provides conversion between tick indices and interest rates:
+
+```text
+// Convert tick to interest rate
+int128 rate = TickMath.getRateAtTick(tick, tickStep);
+
+// Formula: rate = 1.00005^(tick * tickStep) - 1 for tick >= 0
+//          rate = -(1.00005^(-tick * tickStep) - 1) for tick < 0
+```
+
+### Examples
+
+```
+// tickStep = 2
+tick = 0    -> rate = 0% (neutral)
+tick = 100  -> rate =   1.00005^200 - 1  ≈  1.005%
+tick = -100 -> rate = -(1.00005^200 - 1) ≈ -1.005%
+```
+
+## Matching Priority
+
+Boros order book follows the standard **rate-time priority** matching:
+
+- Orders offering better rates are matched first
+  - For long orders: Higher rates (willing to pay more) have priority
+  - For short orders: Lower rates (willing to receive less) have priority
+- Within the same rate level (tick), orders are matched in the order they were placed (FIFO)
+  - The `orderIndex` within each tick determines the exact queue position
+
+## Order Id
+
+Each order in Boros has a unique order Id **within its market**. The combination of **(Market ID, Order ID)** is the globally unique identifier. Order IDs may be reused across different markets — do not use the Order ID alone as a unique key.
+
+The order Id is a 64-bit packed value containing order metadata:
+
+```text
+OrderId structure (64 bits):
+┌─────────┬──────────────┬──────────┬─────────────┬──────────────┐
+│ Init(1) │ Reserved(6)  │ Side(1)  │ Tick(16)    │ Index(40)    │
+└─────────┴──────────────┴──────────┴─────────────┴──────────────┘
+
+Bit 63:    Initialization marker (always 1 for valid orders)
+Bits 57-62: Reserved
+Bit 56:    Side (0 = LONG, 1 = SHORT)
+Bits 40-55: Encoded tick index
+Bits 0-39:  Order index within tick
+```
+
+This encoding has a nice ordering property: orders with **lower OrderId values** have **higher priority** in the order book.
+
+### Parsing OrderId
+
+```text
+// Parsing an OrderId
+(Side side, int16 tickIndex, uint40 orderIndex) = OrderIdLib.unpack(orderId);
+
+// Quick access methods
+Side side = orderId.side();
+int16 tick = orderId.tickIndex();
+uint40 index = orderId.orderIndex();
+```
+
+## Placing orders
+
+### Time In Force
+
+Time In Force (TIF) parameters control how orders behave during matching and placement. Boros supports five TIF types: GTC, IOC, FOK, ALO, and SOFT_ALO. See [Custom Types — TimeInForce](/boros-dev/Contracts/CustomTypes#timeinforce) for descriptions of each type.
+
+### Self-trade Prevention
+
+Boros prevents self-trading by checking if an incoming order would match against the same account's existing orders. If self-matching is detected, the transaction will revert to protect traders from unintentionally trading with themselves.
+
+### Restrictions
+
+**Order Size**:
+
+- No minimum order size requirement
+- No lot size restrictions - any decimal amount supported
+- Orders must have non-zero size
+
+**Order Limits**:
+
+- Maximum open orders per account across all sides (configurable per market via `maxOpenOrders`, typically 100)
+- Exceeding this limit will cause the transaction to revert
+
+**Rate Bounds (Taker Orders) — "Large Rate Deviation"**:
+
+- When an order matches and executes (taker fill), the resulting trade rate is checked against the mark rate
+- If the rate deviates too much from the mark rate, the transaction reverts with **`Large Rate Deviation`**
+  - **Buy/Long orders**: Rejected if executed rate is too far above the mark rate
+  - **Sell/Short orders**: Rejected if executed rate is too far below the mark rate
+- The acceptable deviation is governed by `maxRateDeviationFactorBase1e4` in the market config
+- When placing **closing orders** (reducing position), a separate, more lenient bound `closingOrderBoundBase1e4` applies
+
+**Limit Order Rate Bounds (Maker Orders) — "Rate too far off"**:
+
+- Limit orders placed on the book have additional rate constraints
+- If a maker order's rate is too far from the mark rate, it is rejected with **`Rate too far off`**
+- The bounds are controlled by four parameters in the market config:
+
+```
+Upper Bound = Mark Rate × (1 + loUpperConst + loUpperSlope × Time to Maturity)
+Lower Bound = Mark Rate × (1 - loLowerConst - loLowerSlope × Time to Maturity)
+```
+
+These parameters ensure limit orders remain within a reasonable range of the current mark rate, scaling with time to maturity.
+
+:::tip Understanding the two rate errors
+- **`Large Rate Deviation`** → applies to **taker fills** (IOC, FOK, or the matched portion of GTC). Your trade's execution rate is too far from the mark rate.
+- **`Rate too far off`** → applies to **maker orders** (the resting portion placed on the book). Your order's rate is too far from the mark rate to be placed.
+:::
+
+## Order Lifecycle
+
+Beyond normal cancellation, orders can be removed by the protocol's risk management system — including force-cancellation of risky accounts' orders and purging of out-of-bound orders (which receive the [`PURGED`](/boros-dev/Contracts/CustomTypes#orderstatus) status). See [Risk Management Actions](./Margin.mdx#risk-management-actions) for details.
+
+For order status values, see [Custom Types — OrderStatus](/boros-dev/Contracts/CustomTypes#orderstatus).
+
+## TWAP Oracle (Mark Rate)
+
+Boros maintains a Time-Weighted Average Price (TWAP) oracle to calculate the **mark rate** — the reference rate used for margining, liquidations, and order rate bounds. The mark rate is essentially the **TWAP of historical trades**.
+
+Each time an order is matched against the order book, the rate of the last matched tick is incorporated into the TWAP calculation based on time elapsed.
+
+The oracle uses a fixed-window observation approach:
+
+```
+markRate = (lastTradedRate × timeElapsed + prevOracleRate × (window - timeElapsed)) / window
+```
+
+The mark rate is distinct from the **mid rate** (midpoint of best bid and best ask) and the **AMM implied rate**. In normal conditions, these values should be close, but they can diverge in thin markets or when the AMM operates outside its active range.

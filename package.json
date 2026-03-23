@@ -1,0 +1,62 @@
+{
+  "name": "pendle-documentation",
+  "version": "1.0.0",
+  "description": "Documentation of the Pendle Protocol.",
+  "author": "Pendle Labs",
+  "license": "MIT",
+  "homepage": "https://docs.pendle.finance",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pendle-finance/documentation.git"
+  },
+  "scripts": {
+    "docusaurus": "docusaurus",
+    "start": "docusaurus start",
+    "build": "docusaurus build",
+    "swizzle": "docusaurus swizzle",
+    "deploy": "docusaurus deploy",
+    "clear": "docusaurus clear",
+    "serve": "docusaurus serve",
+    "write-translations": "docusaurus write-translations",
+    "write-heading-ids": "docusaurus write-heading-ids",
+    "migrate-gitbook": "npx ts-node migrate-gitbook.ts"
+  },
+  "dependencies": {
+    "@docusaurus/core": "^3.6.3",
+    "@docusaurus/plugin-client-redirects": "^3.8.1",
+    "@docusaurus/plugin-content-docs": "^3.6.3",
+    "@docusaurus/plugin-google-gtag": "^3.6.3",
+    "@docusaurus/plugin-sitemap": "3.8.1",
+    "@docusaurus/preset-classic": "^3.6.3",
+    "@easyops-cn/docusaurus-search-local": "^0.52.1",
+    "@mdx-js/react": "^3.0.0",
+    "@svgr/webpack": "^8.1.0",
+    "clsx": "^2.0.0",
+    "lottie-web": "^5.11.0",
+    "prism-react-renderer": "^2.1.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "rehype-katex": "^7.0.0",
+    "remark-math": "^6.0.0"
+  },
+  "devDependencies": {
+    "@docusaurus/module-type-aliases": "^3.6.3",
+    "@docusaurus/tsconfig": "^3.6.3",
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.0.0"
+  },
+  "browserslist": {
+    "production": [
+      ">0.5%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "packageManager": "yarn@4.9.1"
+}

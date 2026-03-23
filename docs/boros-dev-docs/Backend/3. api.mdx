@@ -1,0 +1,426 @@
+# Boros Open API
+
+This guide walks you through integrating with the Boros trading platform via the REST API. For exact request/response schemas and parameter details, see the [interactive API docs](https://api.boros.finance/open-api/docs).
+
+For key concepts and terminology, see the [Glossary](./1.%20glossary.mdx).
+
+**Example Repository:** [https://github.com/pendle-finance/boros-api-examples](https://github.com/pendle-finance/boros-api-examples)
+
+---
+
+## Base URLs
+
+| Environment | Base URL |
+|-------------|----------|
+| Production  | `https://api.boros.finance` |
+
+| Service | Path Prefix | Purpose |
+|---------|-------------|---------|
+| **Open API** | `/open-api/v1/` (or `/v2/`) | Market data, calldata generation, account queries |
+| **Send Txs Bot** | `/send-txs-bot/v2/` or `/v3/` | Submitting signed transactions on-chain |
+| **Stop Order** | `/stop-order/v1/` to `/v3/` | Conditional TP/SL order management |
+
+---
+
+## API Services
+
+### Open API (Primary)
+
+The main API for querying data and generating transaction calldata.
+
+**Interactive docs:** [https://api.boros.finance/open-api/docs](https://api.boros.finance/open-api/docs)
+
+### Send Txs Bot (Transaction Submission)
+
+Receives signed calldata from agents and broadcasts transactions on-chain. You never call smart contracts directly — the bot submits them on your behalf and charges gas fees from your gas balance.
+
+**Interactive docs:** [https://api.boros.finance/send-txs-bot/docs](https://api.boros.finance/send-txs-bot/docs)
+
+### Stop Order Service
+
+Manages conditional stop orders (take-profit / stop-loss). These orders live off-chain and are triggered automatically when the market APR crosses a threshold. See [Stop Orders](#stop-orders-tpsl) below for details.
+
+**Interactive docs:** [https://api.boros.finance/stop-order/docs](https://api.boros.finance/stop-order/docs)
+
+---
+
+## Integration Workflows
+
+### 1. First-Time Setup
+
+Before trading, you need to set up an agent and fund your accounts.
+
+```text
+┌─────────────────────────────────────────────────────┐
+│  1. Generate an agent key pair                      │
+│  2. GET  /calldata/approve-agent → calldata         │
+│  3. Sign & submit approval tx (from root wallet)    │
+│  4. GET  /calldata/deposit → calldata               │
+│  5. Sign & submit deposit tx (from root wallet)     │
+│  6. Top up gas balance for agent tx fees             │
+└─────────────────────────────────────────────────────┘
+```
+
+**Steps 2-5 are "sensitive" actions** — they require the root wallet signature and are submitted directly to the blockchain, not through the Send Txs Bot. The calldata endpoints return a `to` address (the Router contract) and the encoded calldata to include in your transaction.
+
+See [Agent Trading](./2.%20agent.mdx) for the full agent setup guide.
+
+### 2. Placing a Trade (Agent Flow)
+
+Once your agent is approved, this is the typical order placement flow:
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│  1. GET  /markets/{marketId}              → market info      │
+│  2. GET  /simulations/place-order         → preview trade    │
+│  3. POST /calldata/place-orders           → calldata[]       │
+│  4. Sign each calldata with agent key                        │
+│  5. POST /send-txs-bot/v3/agent/bulk-direct-call → tx hash  │
+│  6. Subscribe to WebSocket account channel for fill updates  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Step 2 (simulation) is optional** but recommended — it previews the margin impact, estimated fees, and validates constraints before generating calldata.
+
+**Step 3** returns an array of calldata objects. When `autoExitMarket` is enabled (default), the response may contain **1 or 2 calldatas**: an optional exit-market calldata followed by the place-order calldata. You must submit **all** calldatas, not just the first one.
+
+**Step 5** sends the signed calldata(s) to the Send Txs Bot. Use `bulk-direct-call` when you have multiple calldatas (e.g., exit-market + place-order). Use `direct-call` only when you have exactly one calldata. The response includes a transaction status and hash.
+
+:::tip skipReceipt parameter
+When submitting via the Send Txs Bot, you can set `skipReceipt=true` to get the `txHash` returned immediately without waiting for block inclusion. With `skipReceipt=false` (default), the bot waits for the transaction to be included in a block and returns the full `status` and any `error` message. Use `skipReceipt=true` for lower latency when you can track the transaction status yourself.
+:::
+
+:::info Calldata and requireSuccess
+The calldata endpoints return a **list of calldatas** that execute the intended action. These calldatas should be sent to the `bulk-direct-call` endpoint of the Send Txs Bot.
+
+When submitting via `bulk-direct-call`, use the `requireSuccess` parameter to control atomicity:
+
+- **`requireSuccess=true` (recommended for most actions)** — All calldatas either succeed together or fail together. Use this for actions like place-order with `autoExitMarket`, where the exit-market and place-order calldatas must both execute or neither should.
+- **`requireSuccess=false`** — Each calldata is executed independently; some may succeed while others fail. This is useful specifically for `place-orders` when you want to place multiple orders and don't need them to be atomic (e.g., if one order fails due to insufficient margin, the others can still go through).
+:::
+
+
+### 3. Closing a Position
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│  1. POST /accounts/market-acc-infos       → current position │
+│  2. GET  /simulations/close-active-position → preview close  │
+│  3. POST /calldata/place-orders           → counter-order    │
+│  4. Sign & submit via Send Txs Bot                           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+Closing a position internally creates a counter-order (opposite side, same size). The simulation endpoint handles this logic for you.
+
+### 4. Withdrawing Funds
+
+Withdrawals follow a **request → cooldown → finalize** pattern:
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│  1. GET  /calldata/withdraw-request       → request calldata │
+│  2. Sign & submit withdrawal request (root wallet)           │
+│  3. Wait for cooldown period                                 │
+│  4. Finalize withdrawal on MarketHub contract                │
+│                                                              │
+│  To cancel: GET /calldata/withdraw-cancel → cancel calldata  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+Withdrawal requests and cancellations are **sensitive** actions signed by the root wallet.
+
+### 5. Setting Up Stop Orders (TP/SL)
+
+Stop orders are conditional orders that execute automatically when the market APR hits your target:
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│  1. GET  /stop-order/v1/orders/tpsl/prepare → order params   │
+│  2. POST /stop-order/v2/orders/place        → place order    │
+│                                                              │
+│  To cancel: DELETE /stop-order/v3/orders/cancel              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+The prepare endpoint generates the order parameters (including the calldata that will be executed when triggered). The place endpoint submits the signed conditional order. See [Stop Orders](./6.%20stop-orders.mdx) for details.
+
+---
+
+## Sensitive vs Non-Sensitive Actions
+
+Understanding this distinction is critical for integration:
+
+| Type | Signed by | Submitted via | Examples |
+|------|-----------|---------------|----------|
+| **Sensitive** | Root wallet | Direct to blockchain | Deposit, withdraw, approve/revoke agent |
+| **Non-sensitive** | Agent key | Send Txs Bot | Place orders, cancel orders, cash transfer, enter/exit markets |
+
+Sensitive actions require the root wallet's private key and are submitted as regular Ethereum transactions. Non-sensitive actions are signed by the agent and submitted through the Send Txs Bot service, which handles gas and on-chain submission.
+
+---
+
+## Endpoint Categories
+
+### Assets
+Query available collateral tokens with metadata and current prices.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /assets/all` | List all supported collateral assets |
+
+### Markets
+Query market configurations, order books, and trade history.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /markets` | List all markets with current state and pricing. Includes `isWhitelisted` field. |
+| `GET /markets/{marketId}` | Get a single market's details |
+| `GET /markets/order-books` | Aggregated order book by tick size. _(Deprecated — use v2)_ |
+| `GET /v2/markets/order-books` | Order book with optional AMM liquidity. Response includes `syncStatus` (`blockNumber` + `timestamp`). |
+| `GET /markets/market-trades` | Recent executed trades |
+| `GET /markets/chart` | OHLCV candlestick data |
+
+### Accounts
+Query and manage user account state.
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /accounts/market-acc-infos` | Positions, margins, balances for market accounts. See [details below](#market-acc-infos). |
+| `GET /accounts/entered-markets` | Markets entered by a cross-margin account |
+| `GET /accounts/active-positions` | All active positions for a user. See [details below](#active-positions). |
+| `GET /accounts/latest-settlements` | Latest settlement per market position. See [details below](#latest-settlements). |
+| `GET /accounts/limit-orders` | Active/inactive limit orders. _(Deprecated — use v2)_ |
+| `GET /accounts/transactions` | Trade history. _(Deprecated — use v2)_ |
+| `GET /accounts/settlements` | Funding rate settlement history |
+| `GET /accounts/transfer-logs` | Deposit/withdrawal transfer logs. _(Deprecated — use v2)_ |
+| `GET /accounts/gas-balance` | Current gas balance |
+| `GET /accounts/gas-consumption-history` | Gas usage history. _(Deprecated — use v2)_ |
+| `GET /accounts/settings` | User account settings |
+| `POST /accounts/settings` | Update settings (agent-signed) |
+
+#### Market Acc Infos
+
+`POST /accounts/market-acc-infos` — Returns detailed account information for one or more market accounts. Accepts an array of up to **100** `marketAccs` in the request body.
+
+**Response fields (per market account):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `totalCash` | string | Total cash balance (bigint string in settlement token) |
+| `netBalance` | string | Equity = totalCash + sum of all position values |
+| `positions` | array | List of active positions (size, rate, entry block, etc.) |
+| `initialMargin` | string | Raw initial margin without leverage |
+| `initialMarginWithLeverage` | string | Initial margin with leverage applied |
+| `availableInitialMargin` | string | Remaining margin available for new positions |
+| `availableMaintMargin` | string | Remaining margin before liquidation (health ratio = 1.0 when zero) |
+
+Response includes `syncStatus` (`blockNumber` + `timestamp`).
+
+#### Active Positions
+
+`GET /accounts/active-positions` — Returns all active (non-zero size) positions for a user's account. Query params: `userAddress`, `accountId`.
+
+**Response fields (per position):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `marketId` | number | Market identifier |
+| `marketAcc` | MarketAcc | Packed account position identifier |
+| `isCross` | boolean | Whether the position uses cross-margin mode |
+| `fixedApr` | number | The fixed APR of the position (e.g. `0.05` = 5%) |
+| `signedSize` | string | Bigint string of signed position size (negative = short) |
+| `side` | Side | `0` = Long, `1` = Short |
+| `cumulativePnl` | string | Bigint string of all-time cumulative trade PnL |
+| `isMatured` | boolean | Whether the market has reached its maturity date |
+
+Response includes `syncStatus` (`blockNumber` + `timestamp`).
+
+#### Latest Settlements
+
+`GET /accounts/latest-settlements` — Returns the most recent settlement for each market that a user's account has participated in. Query params: `userAddress`, `accountId`.
+
+**Response fields (per settlement):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `marketId` | number | Market identifier |
+| `marketAcc` | MarketAcc | Packed account position identifier |
+| `isCross` | boolean | Whether the position uses cross-margin mode |
+| `isMatured` | boolean | Whether the market has reached maturity |
+| `timestamp` | number | Timestamp of the latest settlement |
+| `side` | Side | Position side at time of settlement (`0` = Long, `1` = Short) |
+| `positionSize` | string | Bigint string of position size at settlement |
+| `yieldPaid` | string | Bigint string of yield paid in the latest settlement period |
+| `yieldReceived` | string | Bigint string of yield received in the latest settlement period |
+| `settlement` | string | Net settlement = yieldReceived − yieldPaid |
+| `settlementRate` | number | Annualized settlement rate of the latest period (e.g. `0.05` = 5%) |
+| `cumulativeSettlementPnl` | string | All-time cumulative settlement PnL |
+| `sinceOpenSettlementPnl` | string | Cumulative settlement PnL since position was opened |
+
+Response includes `syncStatus` (`blockNumber` + `timestamp`).
+
+#### V2 Accounts (Cursor-Based Pagination)
+
+The v2 endpoints replace the v1 offset-based pagination (`skip`/`limit`/`total`) with **cursor-based pagination** using a `resumeToken`. This is significantly more efficient for large datasets.
+
+**How it works:**
+1. Make the initial request with `limit` (no `resumeToken`)
+2. The response includes a `resumeToken` string — pass it as a query parameter on the next request to get the next page
+3. When `resumeToken` is `null`, there are no more pages
+
+All v2 responses also include a `syncStatus` field (`blockNumber` + `timestamp`) indicating how up-to-date the backend data is.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /v2/accounts/limit-orders` | Limit orders sorted by last updated. Supports `marketId`, `isActive`, `orderType` filters. Max `limit`: 2000. |
+| `GET /v2/accounts/all-limit-orders` | All limit orders sorted by placed order. **Guarantees no missed orders** during pagination — use this for syncing/indexing. |
+| `GET /v2/accounts/transactions` | Trade history with cursor pagination. Supports `fromBlockNumber`, `toBlockNumber`, `isLimitOrderTrade` filters. Max `limit`: 2000. |
+| `GET /v2/accounts/transfer-logs` | Deposit/withdrawal logs with cursor pagination. Max `limit`: 100. |
+| `GET /v2/accounts/gas-consumption-history` | Gas usage history with cursor pagination. Max `limit`: 100. |
+
+:::tip Which limit-orders endpoint to use?
+- **`/v2/accounts/limit-orders`** — sorted by last updated (`eventIndex`). Best for showing recent activity in a UI. Note: orders updated during pagination may shift position, so you might miss or duplicate some entries.
+- **`/v2/accounts/all-limit-orders`** — sorted by immutable placed timestamp (`placedEventIndex`). Guarantees stable pagination — **use this for syncing all orders**.
+:::
+
+**New response fields on limit orders:**
+- `placedTxHash` — the transaction hash where the order was originally placed
+
+### Calldata Generation
+Generate transaction calldata for on-chain operations.
+
+**Sensitive (root-signed, direct to chain):**
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /calldata/deposit` | Deposit collateral to margin account |
+| `GET /calldata/withdraw-request` | Request withdrawal |
+| `GET /calldata/withdraw-cancel` | Cancel pending withdrawal |
+| `GET /calldata/approve-agent` | Approve an agent |
+| `GET /calldata/revoke-agent` | Revoke an agent |
+| `GET /calldata/vault-pay-treasury` | Pay treasury from vault |
+
+**Non-sensitive (agent-signed, via Send Txs Bot):**
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /calldata/place-orders` | Place one or more limit orders |
+| `POST /calldata/place-orders-with-rate` | Place orders with an explicit desired rate (instead of slippage) |
+| `GET /calldata/cancel-order` | Cancel orders |
+| `GET /calldata/cash-transfer` | Transfer between cross and isolated accounts |
+| `GET /calldata/enter-exit-markets` | Enter or exit markets |
+| `GET /calldata/pay-treasury` | Pay accrued treasury fees |
+| `GET /calldata/add-liquidity-single-cash-to-amm` | Add AMM liquidity |
+| `GET /calldata/remove-liquidity-single-cash-from-amm` | Remove AMM liquidity |
+
+### Simulations
+Preview operations before executing them. All simulation endpoints return the projected account state after the operation.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /simulations/deposit` | Preview deposit effect on account |
+| `GET /simulations/withdraw` | Preview withdrawal effect on account |
+| `GET /simulations/cash-transfer` | Preview cross ↔ isolated transfer |
+| `GET /simulations/place-order` | Preview order placement with fees |
+| `GET /simulations/close-active-position` | Preview closing a position |
+| `GET /simulations/add-liquidity-single-cash` | Preview adding AMM liquidity |
+| `GET /simulations/remove-liquidity-single-cash` | Preview removing AMM liquidity |
+
+### Funding Rate
+Access funding rate data and settlement history.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /funding-rate/all-funding-rate-symbols` | Available funding rate symbols |
+| `POST /funding-rate/settlement-summary` | Historical settlement summaries |
+
+### Agents
+Manage agent authorization.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /agents/expiry-time` | Check agent expiry time |
+
+### Events
+Query protocol events.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /events/liquidation-events` | Liquidation event history |
+
+### Charts
+Charting data for trading UIs.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /charts/ohlcv` | OHLCV candlestick data |
+
+### Leaderboard
+Query trading leaderboard data.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /leaderboard` | Trading leaderboard with rankings |
+| `GET /leaderboard/search` | Search for a specific user on the leaderboard |
+
+### Transaction Status (Send Txs Bot)
+Query transaction status with detailed on-chain event data.
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /send-txs-bot/v2/agent/dedicated/tx-status` | Transaction status with block info |
+| `POST /send-txs-bot/v2/agent/dedicated/tx-status-with-events` | Transaction status with parsed limit order events (placed, cancelled, market order executed). Each status item includes `limitOrdersPlaced` (orderIds + sizes), `limitOrdersCancelled` (orderIds), and `marketOrdersExecuted` (orderId, side, size). |
+
+---
+
+## Error Handling
+
+The Open API returns errors in a structured format:
+
+```json
+{
+  "errorCode": "INVALID_MARKET_ID",
+  "message": "Market with ID 999 not found",
+  "data": {}
+}
+```
+
+The `errorCode` field is a machine-readable string you can use for programmatic error handling. Common error codes include validation errors (invalid parameters), state errors (insufficient margin), and not-found errors.
+
+The Send Txs Bot and Stop Order services use the legacy format:
+
+```json
+{
+  "statusCode": 400,
+  "message": "Invalid signature"
+}
+```
+
+See [Best Practices](./5.%20best-practices.mdx) for error handling recommendations.
+
+---
+
+## Rate Limiting
+
+The API does not currently enforce strict rate limits, but excessive request rates may be throttled. Recommendations:
+
+- Use [WebSocket](./4.%20websocket.mdx) for real-time data instead of polling
+- Use bulk order endpoints instead of multiple single-order calls
+- Cache market and asset data that doesn't change frequently
+
+---
+
+## Code Examples
+
+For complete working examples covering the full integration lifecycle, see:
+
+**[https://github.com/pendle-finance/boros-api-examples](https://github.com/pendle-finance/boros-api-examples)**
+
+Key examples:
+- `01-agent.ts` — Agent setup and approval
+- `02-deposit.ts` to `04-withdraw.ts` — Fund management
+- `05-place-order.ts` to `08-cancel-order.ts` — Order lifecycle
+- `11-bulk-place-orders.ts` — Bulk order placement
+- `12-top-up-gas-account.ts` — Gas management
+- `13-top-up-isolated-account.ts` — Isolated margin funding
